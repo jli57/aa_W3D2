@@ -1,5 +1,6 @@
 require 'sqlite3'
 require 'singleton'
+require 'active_support/inflector'
 
 class QuestionDBConnection < SQLite3::Database
   include Singleton
@@ -11,22 +12,119 @@ class QuestionDBConnection < SQLite3::Database
   end
 end
 
-class Question
-  attr_accessor :title, :body, :author_id
-  attr_reader :id
+class QuestionBase
+  def self.table
+     self.to_s.tableize
+  end
 
   def self.find_by_id(id)
-    question = QuestionDBConnection.instance.execute(<<-SQL, id)
+    results = QuestionDBConnection.instance.execute(<<-SQL, id)
       SELECT
         *
       FROM
-        questions
+        #{table}
       WHERE
         id = ?
     SQL
-    return nil unless question.length > 0
+    return nil unless results.length > 0
+    self.new(results.first)
+  end
 
-    Question.new(question.first)
+  def self.all
+    results = QuestionDBConnection.instance.execute(<<-SQL)
+      SELECT
+        *
+      FROM
+        #{table}
+    SQL
+    parse_all(results)
+  end
+
+  def self.where(options)
+    if options.is_a?(String)
+      where_condition = options
+    else
+      values = options.values
+      where_condition = options.keys.map { | col_name | "#{col_name} = ?" }.join(" AND ")
+    end
+    
+    results = QuestionDBConnection.instance.execute(<<-SQL, *values)
+      SELECT
+        *
+      FROM
+        #{table}
+      WHERE
+        #{where_condition}
+    SQL
+    return nil unless results.length > 0
+    self.parse_all(results)
+  end
+
+  def self.find_by(options)
+    where(options)
+  end
+
+  def save
+    if @id
+      update
+    else
+      create
+    end
+  end
+
+  def attrs
+    Hash[instance_variables.map do |name|
+      [name.to_s[1..-1], instance_variable_get(name)]
+    end]
+  end
+
+  def create
+    raise "#{self} already in database" if @id
+
+    instance_attrs = attrs
+    instance_attrs.delete("id")
+    col_names = instance_attrs.keys.join(", ")
+    question_marks = (["?"] * instance_attrs.count).join(", ")
+    values = instance_attrs.values
+
+    QuestionDBConnection.instance.execute(<<-SQL, *values)
+      INSERT INTO
+        #{self.class.table} (#{col_names})
+      VALUES
+        (#{question_marks})
+    SQL
+    @id = QuestionDBConnection.instance.last_insert_row_id
+  end
+
+  def update
+    raise "#{self} not in database" unless @id
+
+    instance_attrs = attrs
+    instance_attrs.delete("id")
+    set_line = instance_attrs.keys.map { |attr| "#{attr} = ?" }.join(", ")
+    values = instance_attrs.values
+
+    QuestionDBConnection.instance.execute(<<-SQL, *values, id)
+      UPDATE
+        #{self.class.table}
+      SET
+        #{set_line}
+      WHERE
+        id = ?
+    SQL
+  end
+
+  def self.parse_all(results)
+    results.map { |result| self.new(result) }
+  end
+end
+
+class Question < QuestionBase
+  attr_accessor :title, :body, :author_id
+  attr_reader :id, :table_name
+
+  def self.generate(questions)
+    questions.map { |question| Question.new(question) }
   end
 
   def self.find_by_author_id(author_id)
@@ -58,6 +156,7 @@ class Question
     @title = options['title']
     @body = options['body']
     @author_id = options['author_id']
+    @table_name = 'questions'
   end
 
   def author
@@ -114,23 +213,9 @@ class Question
   end
 end
 
-class User
+class User < QuestionBase
   attr_accessor :fname, :lname
   attr_reader :id
-
-  def self.find_by_id(id)
-    user = QuestionDBConnection.instance.execute(<<-SQL, id)
-      SELECT
-        *
-      FROM
-        users
-      WHERE
-        id = ?
-    SQL
-    return nil unless user.length > 0
-
-    User.new(user.first)
-  end
 
   def self.find_by_name(fname, lname)
     user = QuestionDBConnection.instance.execute(<<-SQL, fname, lname)
@@ -219,23 +304,9 @@ class User
 
 end
 
-class QuestionFollow
+class QuestionFollow < QuestionBase
   attr_accessor :follower_id, :question_id
   attr_reader :id
-
-  def self.find_by_id(id)
-    question_follow = QuestionDBConnection.instance.execute(<<-SQL, id)
-      SELECT
-        *
-      FROM
-        question_follows
-      WHERE
-        id = ?
-    SQL
-    return nil unless question_follow.length > 0
-
-    QuestionFollow.new(question_follow.first)
-  end
 
   def self.followers_for_question_id(question_id)
     followers = QuestionDBConnection.instance.execute(<<-SQL, question_id)
@@ -302,23 +373,10 @@ class QuestionFollow
 end
 
 
-class QuestionLike
+class QuestionLike < QuestionBase
   attr_accessor :user_id, :question_id
   attr_reader :id
 
-  def self.find_by_id(id)
-    question_like = QuestionDBConnection.instance.execute(<<-SQL, id)
-      SELECT
-        *
-      FROM
-        question_likes
-      WHERE
-        id = ?
-    SQL
-    return nil unless question_like.length > 0
-
-    QuestionLike.new(question_like.first)
-  end
 
   def self.likers_for_question_id(question_id)
     likers = QuestionDBConnection.instance.execute(<<-SQL, question_id)
@@ -395,23 +453,9 @@ class QuestionLike
   end
 end
 
-class Reply
+class Reply < QuestionBase
   attr_accessor :question_id, :parent_id, :author_id, :body
   attr_reader :id
-
-  def self.find_by_id(id)
-    reply = QuestionDBConnection.instance.execute(<<-SQL, id)
-      SELECT
-        *
-      FROM
-        replies
-      WHERE
-        id = ?
-    SQL
-    return nil unless reply.length > 0
-
-    Reply.new(reply.first)
-  end
 
   def self.find_by_user_id(author_id)
     replies = QuestionDBConnection.instance.execute(<<-SQL, author_id)
