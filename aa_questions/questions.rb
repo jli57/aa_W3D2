@@ -29,11 +29,36 @@ class Question
     Question.new(question.first)
   end
 
+  def self.find_by_author_id(author_id)
+    questions = QuestionDBConnection.instance.execute(<<-SQL, author_id)
+      SELECT
+        *
+      FROM
+        questions
+      WHERE
+        author_id = ?
+    SQL
+    return nil unless questions.length > 0
+
+    questions.map do |question|
+      Question.new(question)
+    end
+
+  end
+
   def initialize(options)
     @id = options['id']
     @title = options['title']
     @body = options['body']
     @author_id = options['author_id']
+  end
+
+  def author
+    User.find_by_id(@author_id)
+  end
+
+  def replies
+    Reply.find_by_question_id(@id)
   end
 end
 
@@ -69,11 +94,18 @@ class User
     User.new(user.first)
   end
 
-
   def initialize(options)
     @id = options['id']
     @fname = options['fname']
     @lname = options['lname']
+  end
+
+  def authored_questions
+    Question.find_by_author_id(@id)
+  end
+
+  def authored_replies
+    Replies.find_by_author_id(@id)
   end
 
 end
@@ -101,6 +133,7 @@ class QuestionFollow
     @follower_id = options['follower_id']
     @question_id = options['question_id']
   end
+
 end
 
 
@@ -147,11 +180,71 @@ class Reply
     Reply.new(reply.first)
   end
 
+  def self.find_by_user_id(author_id)
+    replies = QuestionDBConnection.instance.execute(<<-SQL, author_id)
+      SELECT
+        *
+      FROM
+        replies
+      WHERE
+        author_id = ?
+    SQL
+    return nil unless replies.length > 0
+
+    replies.map do |reply|
+      Reply.new(reply)
+    end
+  end
+
+  def self.find_by_question_id(question_id)
+    replies = QuestionDBConnection.instance.execute(<<-SQL, question_id)
+      SELECT
+        *
+      FROM
+        replies
+      WHERE
+        question_id = ?
+    SQL
+    return nil unless replies.length > 0
+
+    replies.map do |reply|
+      Reply.new(reply)
+    end
+  end
+
   def initialize(options)
     @id = options['id']
     @question_id = options['question_id']
     @body = options['body']
     @parent_id = options['parent_id']
     @author_id = options['author_id']
+  end
+
+  def author
+    User.find_by_id(@author_id)
+  end
+
+  def question
+    Question.find_by_id(@question_id)
+  end
+
+  def parent_reply
+    Reply.find_by_id(@parent_id)
+  end
+
+  def child_replies
+    replies = QuestionDBConnection.instance.execute(<<-SQL, @id)
+      SELECT
+        *
+      FROM
+        replies
+      WHERE
+        parent_id = ?
+    SQL
+    return nil unless replies.length > 0
+
+    replies.map do |reply|
+      Reply.new(reply)
+    end
   end
 end
