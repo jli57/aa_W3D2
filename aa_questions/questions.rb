@@ -43,7 +43,14 @@ class Question
     questions.map do |question|
       Question.new(question)
     end
+  end
 
+  def self.most_followed(n)
+    QuestionFollow.most_followed_questions(n)
+  end
+
+  def self.most_liked(n)
+    QuestionLike.most_liked_questions(n)
   end
 
   def initialize(options)
@@ -63,6 +70,47 @@ class Question
 
   def followers
     QuestionFollow.followers_for_question_id(@id)
+  end
+
+  def likers
+    QuestionLike.likers_for_question_id(@id)
+  end
+
+  def num_likes
+    QuestionLike.num_likes_for_question_id(@id)
+  end
+
+  def save
+    if @id
+      update
+    else
+      create
+    end
+  end
+
+  private
+
+  def create
+    raise "#{self} already in database" if @id
+    QuestionDBConnection.instance.execute(<<-SQL,  @title, @body, @author_id)
+      INSERT INTO
+        questions (title, body, author_id)
+      VALUES
+        (?, ?, ?)
+    SQL
+    @id = QuestionDBConnection.instance.last_insert_row_id
+  end
+
+  def update
+    raise "#{self} not in database" unless @id
+    QuestionDBConnection.instance.execute(<<-SQL,  @title, @body, @author_id, @id)
+      UPDATE
+        questions
+      SET
+        title = ?, body = ?, author_id = ?
+      WHERE
+        id = ?
+    SQL
   end
 end
 
@@ -114,6 +162,59 @@ class User
 
   def followed_questions
     QuestionFollow.followed_questions_for_user_id(@id)
+  end
+
+  def liked_questions
+    QuestionLike.liked_questions_for_user_id(@id)
+  end
+
+  def average_karma
+    avg_karma = QuestionDBConnection.instance.execute(<<-SQL, @id)
+      SELECT
+        COALESCE( ( COUNT(*) / CAST( COUNT(DISTINCT a.id) AS float ) ), 0) AS avg_karma
+      FROM
+        questions AS a
+      LEFT JOIN
+        question_likes AS b
+      ON
+        a.id = b.question_id
+      WHERE
+        a.author_id = ?
+    SQL
+    avg_karma.first['avg_karma']
+  end
+
+  def save
+    if @id
+      update
+    else
+      create
+    end
+  end
+
+  private
+
+  def create
+    raise "#{self} already in database" if @id
+    QuestionDBConnection.instance.execute(<<-SQL, @fname, @lname)
+      INSERT INTO
+        users (fname, lname)
+      VALUES
+        (?, ?)
+    SQL
+    @id = QuestionDBConnection.instance.last_insert_row_id
+  end
+
+  def update
+    raise "#{self} not in database" unless @id
+    QuestionDBConnection.instance.execute(<<-SQL,  @fname, @lname, @id)
+      UPDATE
+        users
+      SET
+        fname = ?, lname = ?
+      WHERE
+        id = ?
+    SQL
   end
 
 end
@@ -171,22 +272,21 @@ class QuestionFollow
   def self.most_followed_questions(n)
     questions = QuestionDBConnection.instance.execute(<<-SQL, n)
       SELECT
-        *
+        a.*
       FROM
-        questions
-      WHERE
-        id IN (
+        questions a
+      JOIN (
           SELECT
-            question_id
+            question_id, COUNT(id) AS count
           FROM
             question_follows AS a
           GROUP BY
             question_id
-          ORDER BY
-            COUNT(id) DESC
-          LIMIT
-            ?
-        )
+        ) b ON a.id = b.question_id
+      ORDER BY
+        b.count DESC
+      LIMIT
+        ?
     SQL
     return nil unless questions.length > 0
 
@@ -218,6 +318,74 @@ class QuestionLike
     return nil unless question_like.length > 0
 
     QuestionLike.new(question_like.first)
+  end
+
+  def self.likers_for_question_id(question_id)
+    likers = QuestionDBConnection.instance.execute(<<-SQL, question_id)
+      SELECT
+        b.*
+      FROM
+        question_likes AS a
+      JOIN
+        users AS b ON a.user_id = b.id
+      WHERE
+        question_id = ?
+    SQL
+    return nil unless likers.length > 0
+
+    likers.map { |liker| User.new(liker) }
+  end
+
+  def self.num_likes_for_question_id(question_id)
+    num_likes = QuestionDBConnection.instance.execute(<<-SQL, question_id)
+      SELECT
+        COUNT(*) AS count
+      FROM
+        question_likes
+      WHERE
+        question_id = ?
+    SQL
+    num_likes.first['count']
+  end
+
+  def self.liked_questions_for_user_id(user_id)
+    liked_questions = QuestionDBConnection.instance.execute(<<-SQL, user_id)
+      SELECT
+        b.*
+      FROM
+        question_likes AS a
+      JOIN
+        questions AS b ON a.question_id = b.id
+      WHERE
+        user_id = ?
+    SQL
+    return nil unless liked_questions.length > 0
+
+    liked_questions.map { |liked_question| Question.new(liked_question) }
+  end
+
+  def self.most_liked_questions(n)
+    questions = QuestionDBConnection.instance.execute(<<-SQL, n)
+      SELECT
+        a.*
+      FROM
+        questions a
+      JOIN (
+          SELECT
+            question_id, COUNT(id) AS count
+          FROM
+            question_likes AS a
+          GROUP BY
+            question_id
+        ) b ON a.id = b.question_id
+      ORDER BY
+        b.count DESC
+      LIMIT
+        ?
+    SQL
+    return nil unless questions.length > 0
+
+    questions.map { |question| Question.new(question) }
   end
 
   def initialize(options)
@@ -311,5 +479,39 @@ class Reply
     replies.map do |reply|
       Reply.new(reply)
     end
+  end
+
+  def save
+    if @id
+      update
+    else
+      create
+    end
+  end
+
+  private
+
+  def create
+    raise "#{self} already in database" if @id
+    QuestionDBConnection.instance.execute(<<-SQL, @question_id, @body, @parent_id, @author_id)
+      INSERT INTO
+        replies (question_id, body, parent_id, author_id )
+      VALUES
+        (?, ?, ?, ?)
+    SQL
+    @id = QuestionDBConnection.instance.last_insert_row_id
+  end
+
+  def update
+    raise "#{self} not in database" unless @id
+    QuestionDBConnection.instance.execute(<<-SQL, @question_id, @body, @parent_id, @author_id, @id)
+
+      UPDATE
+        replies
+      SET
+        question_id = ?, body = ?, parent_id = ?, author_id = ?
+      WHERE
+        id = ?
+    SQL
   end
 end
