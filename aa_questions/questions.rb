@@ -60,6 +60,10 @@ class Question
   def replies
     Reply.find_by_question_id(@id)
   end
+
+  def followers
+    QuestionFollow.followers_for_question_id(@id)
+  end
 end
 
 class User
@@ -108,6 +112,10 @@ class User
     Replies.find_by_author_id(@id)
   end
 
+  def followed_questions
+    QuestionFollow.followed_questions_for_user_id(@id)
+  end
+
 end
 
 class QuestionFollow
@@ -126,6 +134,38 @@ class QuestionFollow
     return nil unless question_follow.length > 0
 
     QuestionFollow.new(question_follow.first)
+  end
+
+  def self.followers_for_question_id(question_id)
+    followers = QuestionDBConnection.instance.execute(<<-SQL, question_id)
+      SELECT
+        b.*
+      FROM
+        question_follows AS a
+      JOIN
+        users AS b ON a.follower_id = b.id
+      WHERE
+        question_id = ?
+    SQL
+    return nil unless followers.length > 0
+
+    followers.map { |follower| User.new(follower) }
+  end
+
+  def self.followed_questions_for_user_id(user_id)
+    questions = QuestionDBConnection.instance.execute(<<-SQL, user_id)
+      SELECT
+        b.*
+      FROM
+        question_follows AS a
+      JOIN
+        questions AS b ON a.question_id = b.id
+      WHERE
+        follower_id = ?
+    SQL
+    return nil unless questions.length > 0
+
+    questions.map { |question| Question.new(question) }
   end
 
   def initialize(options)
